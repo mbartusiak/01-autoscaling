@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:  Excercise 1 - web server stack with AS capabilities and monitoring in place
+
+Parameters:
+
+  Name:
+    Type: String
+
+Resources:
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.30.0.0/16
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  igwName:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref igwName
+
+  SubnetElbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1a"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.0.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  SubnetElbB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1b"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.16.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  SubnetElbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1c"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.32.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+  
+  SubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1a"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.48.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+  
+  SubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1b"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.64.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+  
+  SubnetPrivateC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1c"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.80.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  SubnetNAT:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "eu-west-1a"
+      VpcId: !Ref myVPC
+      CidrBlock: 172.30.128.0/20
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  NAT:
+   Type: AWS::EC2::NatGateway
+   Properties:
+      AllocationId:
+         Fn::GetAtt:
+         - EIP
+         - AllocationId
+      SubnetId: !Ref SubnetNAT
+      Tags:
+      - Key: Name
+        Value: !Ref Name
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+        Domain: vpc
+
+  RouteNAT:
+    Type: AWS::EC2::Route
+    Properties:
+        RouteTableId: !Ref routeTableNAT
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref NAT
+
+  routeInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref routeTableInternet
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref igwName
+  
+  routeTableNAT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  routeTableAssocNAT:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetNAT
+      RouteTableId: !Ref routeTableInternet
+
+  routeTableAssocNATA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateA
+      RouteTableId: !Ref routeTableNAT
+
+  routeTableAssocNATB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateB
+      RouteTableId: !Ref routeTableNAT
+
+  routeTableAssocNATC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateC
+      RouteTableId: !Ref routeTableNAT
+    
+  routeTableInternet:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+
+  routeTableAssocA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetElbA
+      RouteTableId: !Ref routeTableInternet
+      
+  routeTableAssocB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetElbB
+      RouteTableId: !Ref routeTableInternet
+
+  routeTableAssocC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetElbC
+      RouteTableId: !Ref routeTableInternet
+
+Outputs:
+  myVPC:
+    Value: !Ref myVPC
+    Export: 
+      Name: !Sub ${AWS::StackName}-myVPC
+  SubnetElbA:
+    Value: !Ref SubnetElbA
+    Export: 
+      Name: !Sub ${AWS::StackName}-SubnetElbA
+  SubnetElbB:
+    Value: !Ref SubnetElbB
+    Export: 
+      Name: !Sub ${AWS::StackName}-SubnetElbB
+  SubnetElbC:
+    Value: !Ref SubnetElbC
+    Export: 
+      Name: !Sub ${AWS::StackName}-SubnetElbC
+  SubnetPrivateA:
+    Value: !Ref SubnetPrivateA
+    Export: 
+      Name: !Sub ${AWS::StackName}-SubnetPrivateA
+  SubnetPrivateB:
+    Value: !Ref SubnetPrivateB
+    Export: 
+      Name: !Sub ${AWS::StackName}-SubnetPrivateB
+  SubnetPrivateC:
+    Value: !Ref SubnetPrivateC
+    Export: 
+      Name: !Sub ${AWS::StackName}-SubnetPrivateC
+
+
+  

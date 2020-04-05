@@ -1,0 +1,296 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:  Excercise 1 - web server stack with AS capabilities and monitoring in place
+
+Parameters:
+
+  Name:
+    Type: String
+
+  AMIId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-04d5cc9b88f9d1d39
+    Description: Enter AMIID which will be used to spin up instances hosting the webser.
+
+  InstanceType:
+    Type: String
+    Default: t2.nano
+
+  HighWaterMark:
+    Type: String
+    Default: 50
+  
+  LowWaterMark:
+    Type: String
+    Default: 30
+
+Resources:
+
+  ElbSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Ref Name
+      VpcId: 
+        'Fn::ImportValue': !Sub ${Name}-network-myVPC
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  Ec2SG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Ref Name
+      VpcId: 
+        'Fn::ImportValue': !Sub ${Name}-network-myVPC
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  AutoscalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      TargetGroupARNs:
+        - !Ref LoadBalancerAppTargetGroup
+      VPCZoneIdentifier:
+        - 'Fn::ImportValue': !Sub ${Name}-network-SubnetPrivateA
+        - 'Fn::ImportValue': !Sub ${Name}-network-SubnetPrivateB
+        - 'Fn::ImportValue': !Sub ${Name}-network-SubnetPrivateC
+      HealthCheckGracePeriod: 60
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref LaunchConfig
+      DesiredCapacity: "3"
+      MaxSize: "5"
+      MinSize: "3"
+      MetricsCollection:
+        - Granularity: 1Minute
+          Metrics:
+            - GroupInServiceInstances
+            - GroupMinSize
+            - GroupMaxSize
+            - GroupDesiredCapacity
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+
+  ScalingUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties: 
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref AutoscalingGroup
+      ScalingAdjustment: 2
+      Cooldown: "60"
+
+  ScalingDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties: 
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref AutoscalingGroup
+      ScalingAdjustment: -2
+      Cooldown: "60"
+
+  CpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Period: 60
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: !Ref HighWaterMark
+      AlarmDescription: Alarm if CPU load is high
+      AlarmName: !Sub '${Name}-high-water'
+      AlarmActions:
+        - !Ref ScalingUpPolicy
+      Namespace: AWS/EC2
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoscalingGroup
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      MetricName: CPUUtilization
+
+  CpuLowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Period: 60
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: !Ref LowWaterMark
+      AlarmDescription: Alarm if CPU load is high
+      AlarmName: !Sub '${Name}-low-water'
+      AlarmActions:
+        - !Ref ScalingDownPolicy
+      Namespace: AWS/EC2
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoscalingGroup
+      ComparisonOperator: LessThanThreshold
+      MetricName: CPUUtilization
+
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AMIId
+      SecurityGroups:
+        - !Ref Ec2SG
+      InstanceType: !Ref InstanceType
+      KeyName: aws_eu_west_1
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 10
+      #IamInstanceProfile: !Ref IAMInstanceProfile
+      UserData:
+        Fn::Base64: |
+            #!/bin/bash
+            yum update -y
+            amazon-linux-extras install docker
+            service docker start
+            usermod -a -G docker ec2-user
+            su - ec2-user -c 'docker run -d -p 80:8080 kodekloud/simple-webapp'
+         
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Ref Name
+      Scheme: internet-facing
+      Subnets:
+        - 'Fn::ImportValue': !Sub ${Name}-network-SubnetElbA
+        - 'Fn::ImportValue': !Sub ${Name}-network-SubnetElbB
+        - 'Fn::ImportValue': !Sub ${Name}-network-SubnetElbC
+      Tags:
+        - Key: Name
+          Value: !Ref Name
+      SecurityGroups:
+        - !Ref ElbSG
+
+  LoadBalancerAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Ref Name
+      Port: 80
+      Protocol: HTTP
+      VpcId: 
+        'Fn::ImportValue': !Sub ${Name}-network-myVPC
+
+  LoadBalancerHttp:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      LoadBalancerArn: !Ref LoadBalancer
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LoadBalancerAppTargetGroup
+
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties: 
+      DashboardName: !Sub ${Name}-dashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+              {
+                  "type": "metric",
+                  "x": 3,
+                  "y": 8,
+                  "width": 21,
+                  "height": 3,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${LoadBalancer.LoadBalancerFullName}" ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "eu-west-1",
+                      "stat": "Sum",
+                      "period": 60,
+                      "title": "RequestCountPerMinute"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 1,
+                  "width": 24,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "${AutoscalingGroup}", { "yAxis": "left" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": true,
+                      "region": "eu-west-1",
+                      "period": 60,
+                      "stat": "Maximum",
+                      "yAxis": {
+                          "left": {
+                              "showUnits": false
+                          },
+                          "right": {
+                              "showUnits": true
+                          }
+                      }
+                  }
+              },
+              {
+                  "type": "text",
+                  "x": 0,
+                  "y": 0,
+                  "width": 24,
+                  "height": 1,
+                  "properties": {
+                      "markdown": "\n# Historic web server scaling\n"
+                  }
+              },
+              {
+                  "type": "text",
+                  "x": 0,
+                  "y": 7,
+                  "width": 24,
+                  "height": 1,
+                  "properties": {
+                      "markdown": "\n# Active traffic requests\n"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 8,
+                  "width": 3,
+                  "height": 3,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${LoadBalancer.LoadBalancerFullName}" ]
+                      ],
+                      "view": "singleValue",
+                      "stacked": false,
+                      "region": "eu-west-1",
+                      "stat": "Sum",
+                      "period": 60,
+                      "title": "PerMinute"
+                  }
+              }
+          ]
+        }
+
+Outputs:
+  LoadBalancerUrl:
+    Value: !Sub  http://${LoadBalancer.DNSName}/
+    Export: 
+      Name: !Sub ${AWS::StackName}-LoadBalancerUrl
