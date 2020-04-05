@@ -32,4 +32,4 @@ Run the `scripts/stress_test.sh` script against the ELB endpoint (simple copy th
 
 Open the CloudWatch dashboard and observe the historic web server scaling and active request counts.
 
-[dashboard]: https://imgur.com/a/dxz0qOR "Cloudwatch dashboard"
+[dashboard](https://imgur.com/eeiPm6J)
